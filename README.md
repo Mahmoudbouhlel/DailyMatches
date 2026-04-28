@@ -1,6 +1,6 @@
 # Flashscore Prediction Studio
 
-Modern React + TypeScript dashboard for the `flashscore_scraper` MariaDB database.
+Modern React + TypeScript dashboard for the Aiven MySQL Flashscore database.
 
 ## Run
 
@@ -13,16 +13,27 @@ The web app runs on `http://localhost:5173` and the API runs on `http://localhos
 
 ## Database
 
-The app is configured for:
+For Aiven MySQL, configure these variables locally and in Vercel:
 
 ```env
-DB_HOST=127.0.0.1
-DB_USER=root
-DB_PASSWORD=
-DB_NAME=flashscore_scraper
+DB_HOST=mysql-22471e8b-episousse-2832.a.aivencloud.com
+DB_PORT=25465
+DB_USER=avnadmin
+DB_PASSWORD=your_revealed_aiven_password
+DB_NAME=defaultdb
+DB_SSL=required
 ```
 
-Import `C:/Users/mahmoud/Downloads/flashscore_scraper.sql` into MariaDB or phpMyAdmin using the database name `flashscore_scraper`.
+In Vercel, add them in **Project Settings -> Environment Variables**, then redeploy.
+
+Aiven requires SSL. The API enables SSL when `DB_SSL=required`.
+If your deployment reports certificate verification errors, copy the Aiven **CA certificate** and add:
+
+```env
+DB_CA_CERT=-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----
+```
+
+Import your SQL tables into Aiven's `defaultdb` database before deploying.
 
 Main API routes:
 

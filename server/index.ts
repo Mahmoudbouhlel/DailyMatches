@@ -11,12 +11,22 @@ const port = Number(process.env.PORT ?? 4000);
 app.use(cors());
 app.use(express.json());
 
+const sslMode = (process.env.DB_SSL ?? "").toLowerCase();
+const sslEnabled = ["true", "1", "required", "require"].includes(sslMode);
+const caCertificate = process.env.DB_CA_CERT?.replace(/\\n/g, "\n");
+
 const pool = mysql.createPool({
   host: process.env.DB_HOST ?? "127.0.0.1",
   port: Number(process.env.DB_PORT ?? 3306),
   user: process.env.DB_USER ?? "root",
   password: process.env.DB_PASSWORD ?? "",
   database: process.env.DB_NAME ?? "flashscore_scraper",
+  ssl: sslEnabled
+    ? {
+        ca: caCertificate,
+        rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== "false",
+      }
+    : undefined,
   waitForConnections: true,
   connectionLimit: 10,
   namedPlaceholders: true,
