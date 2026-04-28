@@ -128,6 +128,21 @@ type FilterOption = {
   count: number;
 };
 
+type DatabaseHealth = {
+  ok: boolean;
+  connected: boolean;
+  database: string;
+  host: string;
+  server_host?: string | null;
+  server_version?: string | null;
+  ssl?: boolean;
+  tables?: string[];
+  missingTables?: string[];
+  checkedAt?: string;
+  message?: string;
+  detail?: string;
+};
+
 type ApiState = {
   summary: Summary | null;
   picks: Pick[];
@@ -169,18 +184,36 @@ function App() {
   const [data, setData] = useState<ApiState>(initialState);
   const [filters, setFilters] = useState({ country: "all", market: "all", slipDate: "all" });
   const [view, setView] = useState<"dashboard" | "history">("dashboard");
+  const [databaseStatus, setDatabaseStatus] = useState<{
+    state: "checking" | "online" | "degraded" | "offline";
+    health: DatabaseHealth | null;
+  }>({ state: "checking", health: null });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
     setError(null);
+    setDatabaseStatus((current) => ({ ...current, state: "checking" }));
     const query = toQuery(filters);
     const historyQuery = toQuery(filters, true);
     const suffix = query ? `?${query}` : "";
     const historySuffix = historyQuery ? `?${historyQuery}` : "";
+    let health: DatabaseHealth | null = null;
 
     try {
+      health = await getJson<DatabaseHealth>("/api/health");
+      setDatabaseStatus({ state: health.ok ? "online" : "degraded", health });
+
+      if (!health.connected) {
+        throw new Error(health.detail ?? health.message ?? "Database host is offline");
+      }
+
+      if (!health.ok) {
+        const missing = health.missingTables?.length ? `Missing tables: ${health.missingTables.join(", ")}` : null;
+        throw new Error(missing ?? "Database is connected but not ready");
+      }
+
       const [summary, picks, history, historySummary, filterData] = await Promise.all([
         getJson<Summary>(`/api/summary${suffix}`),
         getJson<Pick[]>(`/api/picks${suffix}`),
@@ -199,6 +232,9 @@ function App() {
         historyDates: filterData.historyDates,
       });
     } catch (loadError) {
+      if (!health) {
+        setDatabaseStatus({ state: "offline", health: null });
+      }
       setError(loadError instanceof Error ? loadError.message : "Unable to load dashboard data");
     } finally {
       setLoading(false);
@@ -237,10 +273,7 @@ function App() {
               </div>
               <div className="flex flex-wrap gap-2">
                 <Badge className="border-red-200 bg-red-50 text-red-700">Tunisia system</Badge>
-                <Badge className="border-emerald-200 bg-emerald-50 text-emerald-700">
-                  <Database className="mr-1 h-3.5 w-3.5" />
-                  MariaDB live
-                </Badge>
+                <DatabaseStatusBadge status={databaseStatus} />
               </div>
             </div>
             <p className="mb-3 text-sm font-semibold uppercase tracking-[0.24em] text-red-600">Prediction cockpit</p>
@@ -261,14 +294,38 @@ function App() {
           >
             <div className="flex items-center justify-between gap-4">
               <div>
-                <p className="text-sm text-slate-500">Latest slip</p>
+                <p className="text-sm text-slate-500">Host database</p>
                 <p className="mt-1 text-2xl font-semibold text-slate-950">
-                  {data.summary?.betslip.latest_slip_date ?? "Loading"}
+                  {databaseStatus.health?.database ?? "Checking"}
+                </p>
+                <p className="mt-1 max-w-[280px] truncate text-xs text-slate-500">
+                  {databaseStatus.health?.host ?? "Verifying connection before loading"}
                 </p>
               </div>
-              <div className="rounded-2xl bg-red-600 p-3 text-white shadow-lg shadow-red-600/20">
-                <Target className="h-6 w-6" />
+              <div className={databaseStatus.state === "online" ? "rounded-2xl bg-emerald-600 p-3 text-white shadow-lg shadow-emerald-600/20" : "rounded-2xl bg-red-600 p-3 text-white shadow-lg shadow-red-600/20"}>
+                <Database className="h-6 w-6" />
               </div>
+            </div>
+            <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm font-medium text-slate-600">Load gate</span>
+                <span className={databaseStatus.state === "online" ? "text-sm font-semibold text-emerald-700" : databaseStatus.state === "checking" ? "text-sm font-semibold text-amber-700" : "text-sm font-semibold text-red-700"}>
+                  {databaseStatus.state === "online"
+                    ? "Ready"
+                    : databaseStatus.state === "checking"
+                      ? "Checking"
+                      : databaseStatus.state === "degraded"
+                        ? "Needs setup"
+                        : "Offline"}
+                </span>
+              </div>
+              <p className="mt-2 text-xs leading-5 text-slate-500">
+                {databaseStatus.health?.missingTables?.length
+                  ? `Missing: ${databaseStatus.health.missingTables.join(", ")}`
+                  : databaseStatus.health?.checkedAt
+                    ? `Verified at ${new Date(databaseStatus.health.checkedAt).toLocaleString()}`
+                    : "The dashboard waits for database health before requesting charts."}
+              </p>
             </div>
             <div className="mt-6 grid grid-cols-2 gap-3">
               <HeroMetric label="Picks" value={formatNumber(data.summary?.betslip.total_picks)} />
@@ -348,15 +405,14 @@ function App() {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
-              className="mt-6 rounded-lg border border-amber-500/30 bg-amber-500/10 p-5 text-amber-100"
+              className="mt-6 rounded-2xl border border-red-200 bg-red-50 p-5 text-red-950 shadow-sm"
             >
               <div className="flex items-start gap-3">
-                <Database className="mt-0.5 h-5 w-5" />
+                <Database className="mt-0.5 h-5 w-5 text-red-600" />
                 <div>
-                  <h2 className="font-semibold text-amber-50">Database is not reachable yet</h2>
-                  <p className="mt-1 text-sm text-amber-100/80">
-                    {error}. Start MariaDB and import the SQL dump into `flashscore_scraper`, using root with an empty
-                    password as configured in `.env.example`.
+                  <h2 className="font-semibold text-red-950">Host database is not ready</h2>
+                  <p className="mt-1 text-sm text-red-800">
+                    {error}. Check Vercel environment variables, Aiven SSL, and that the required tables are imported.
                   </p>
                 </div>
               </div>
@@ -414,6 +470,42 @@ function HeroMetric({ label, value }: { label: string; value: string }) {
       <p className="text-xs font-medium uppercase tracking-[0.16em] text-slate-400">{label}</p>
       <p className="mt-2 text-2xl font-semibold text-slate-950">{value}</p>
     </div>
+  );
+}
+
+function DatabaseStatusBadge({
+  status,
+}: {
+  status: { state: "checking" | "online" | "degraded" | "offline"; health: DatabaseHealth | null };
+}) {
+  const config = {
+    checking: {
+      label: "Checking host DB",
+      className: "border-amber-200 bg-amber-50 text-amber-700",
+      icon: <RefreshCw className="mr-1 h-3.5 w-3.5 animate-spin" />,
+    },
+    online: {
+      label: "Host DB online",
+      className: "border-emerald-200 bg-emerald-50 text-emerald-700",
+      icon: <CheckCircle2 className="mr-1 h-3.5 w-3.5" />,
+    },
+    degraded: {
+      label: "DB needs import",
+      className: "border-orange-200 bg-orange-50 text-orange-700",
+      icon: <Database className="mr-1 h-3.5 w-3.5" />,
+    },
+    offline: {
+      label: "Host DB offline",
+      className: "border-red-200 bg-red-50 text-red-700",
+      icon: <XCircle className="mr-1 h-3.5 w-3.5" />,
+    },
+  }[status.state];
+
+  return (
+    <Badge className={config.className} title={status.health?.host ?? "Database host"}>
+      {config.icon}
+      {config.label}
+    </Badge>
   );
 }
 

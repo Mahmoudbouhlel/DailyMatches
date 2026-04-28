@@ -70,13 +70,51 @@ function buildWhere(filters: ReturnType<typeof getFilters>, alias = "m") {
 
 app.get("/api/health", async (_request, response) => {
   try {
-    await query("SELECT 1 AS ok");
-    response.json({ ok: true, database: process.env.DB_NAME ?? "flashscore_scraper" });
+    const [connection] = await query<{
+      ok: number;
+      database_name: string | null;
+      server_host: string | null;
+      server_version: string | null;
+    }>(`
+      SELECT
+        1 AS ok,
+        DATABASE() AS database_name,
+        @@hostname AS server_host,
+        @@version AS server_version
+    `);
+
+    const tableRows = await query<{ table_name: string }>(`
+      SELECT table_name
+      FROM information_schema.tables
+      WHERE table_schema = DATABASE()
+        AND table_name IN ('matches', 'prediction_daily_betslip', 'history_daily_d')
+    `);
+
+    const tables = tableRows.map((row) => row.table_name);
+    const requiredTables = ["matches", "prediction_daily_betslip", "history_daily_d"];
+    const missingTables = requiredTables.filter((table) => !tables.includes(table));
+
+    response.json({
+      ok: missingTables.length === 0,
+      connected: true,
+      database: connection.database_name ?? process.env.DB_NAME ?? "unknown",
+      host: process.env.DB_HOST ?? "127.0.0.1",
+      server_host: connection.server_host,
+      server_version: connection.server_version,
+      ssl: sslEnabled,
+      tables,
+      missingTables,
+      checkedAt: new Date().toISOString(),
+    });
   } catch (error) {
     response.status(503).json({
       ok: false,
+      connected: false,
+      host: process.env.DB_HOST ?? "127.0.0.1",
+      database: process.env.DB_NAME ?? "flashscore_scraper",
       message: "Database connection failed",
       detail: error instanceof Error ? error.message : "Unknown error",
+      checkedAt: new Date().toISOString(),
     });
   }
 });
