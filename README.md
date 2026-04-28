@@ -1,6 +1,6 @@
 # Flashscore Prediction Studio
 
-Modern React + TypeScript dashboard for the Flashscore prediction tables in Supabase.
+Modern React + TypeScript dashboard for the `flashscore_scraper` MariaDB database.
 
 ## Run
 
@@ -13,18 +13,16 @@ The web app runs on `http://localhost:5173` and the API runs on `http://localhos
 
 ## Database
 
-The app is configured for Supabase:
+The app is configured for:
 
 ```env
-NEXT_PUBLIC_SUPABASE_URL=https://kbmpqjogsspbnygbhnbq.supabase.co
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your_supabase_publishable_key
+DB_HOST=127.0.0.1
+DB_USER=root
+DB_PASSWORD=
+DB_NAME=flashscore_scraper
 ```
 
-Create or import these tables in Supabase:
-
-- `prediction_daily_betslip`
-- `history_daily_d`
-- `matches`
+Import `C:/Users/mahmoud/Downloads/flashscore_scraper.sql` into MariaDB or phpMyAdmin using the database name `flashscore_scraper`.
 
 Main API routes:
 
