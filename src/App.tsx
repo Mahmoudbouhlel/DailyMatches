@@ -209,11 +209,6 @@ function App() {
         throw new Error(health.detail ?? health.message ?? "Database host is offline");
       }
 
-      if (!health.ok) {
-        const missing = health.missingTables?.length ? `Missing tables: ${health.missingTables.join(", ")}` : null;
-        throw new Error(missing ?? "Database is connected but not ready");
-      }
-
       const [summary, picks, history, historySummary, filterData] = await Promise.all([
         getJson<Summary>(`/api/summary${suffix}`),
         getJson<Pick[]>(`/api/picks${suffix}`),

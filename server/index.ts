@@ -29,6 +29,8 @@ const pool = mysql.createPool({
     : undefined,
   waitForConnections: true,
   connectionLimit: 10,
+  connectTimeout: Number(process.env.DB_CONNECT_TIMEOUT ?? 30000),
+  enableKeepAlive: true,
   namedPlaceholders: true,
 });
 
@@ -37,6 +39,25 @@ type QueryParams = Record<string, string | number | null>;
 async function query<T>(sql: string, params: QueryParams = {}) {
   const [rows] = await pool.execute(sql, params);
   return rows as T[];
+}
+
+function isMissingTableError(error: unknown) {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code === "ER_NO_SUCH_TABLE"
+  );
+}
+
+function errorDetail(error: unknown) {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string") return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return "Unknown error";
+  }
 }
 
 function getFilters(request: express.Request) {
@@ -84,10 +105,10 @@ app.get("/api/health", async (_request, response) => {
     `);
 
     const tableRows = await query<{ table_name: string }>(`
-      SELECT table_name
+      SELECT TABLE_NAME AS table_name
       FROM information_schema.tables
       WHERE table_schema = DATABASE()
-        AND table_name IN ('matches', 'prediction_daily_betslip', 'history_daily_d')
+        AND TABLE_NAME IN ('matches', 'prediction_daily_betslip', 'history_daily_d')
     `);
 
     const tables = tableRows.map((row) => row.table_name);
@@ -113,7 +134,7 @@ app.get("/api/health", async (_request, response) => {
       host: process.env.DB_HOST ?? "127.0.0.1",
       database: process.env.DB_NAME ?? "flashscore_scraper",
       message: "Database connection failed",
-      detail: error instanceof Error ? error.message : "Unknown error",
+      detail: errorDetail(error),
       checkedAt: new Date().toISOString(),
     });
   }
@@ -121,31 +142,41 @@ app.get("/api/health", async (_request, response) => {
 
 app.get("/api/filters", async (_request, response, next) => {
   try {
-    const countries = await query<{ country: string; count: number }>(`
-      SELECT country, COUNT(*) AS count
-      FROM matches
-      WHERE country IS NOT NULL AND country <> ''
-      GROUP BY country
-      ORDER BY count DESC, country ASC
-      LIMIT 60
-    `);
-
-    const markets = await query<{ market: string; count: number }>(`
-      SELECT market, COUNT(*) AS count
-      FROM prediction_daily_betslip
-      GROUP BY market
-      ORDER BY count DESC
-    `);
-
-    const historyDates = await query<{ slip_date: string; count: number }>(`
-      SELECT slip_date, COUNT(*) AS count
-      FROM history_daily_d
-      GROUP BY slip_date
-      ORDER BY slip_date DESC
-    `);
+    const [countries, markets, historyDates] = await Promise.all([
+      query<{ country: string; count: number }>(`
+        SELECT country, COUNT(*) AS count
+        FROM matches
+        WHERE country IS NOT NULL AND country <> ''
+        GROUP BY country
+        ORDER BY count DESC, country ASC
+        LIMIT 60
+      `).catch((error) => {
+        if (isMissingTableError(error)) return [];
+        throw error;
+      }),
+      query<{ market: string; count: number }>(`
+        SELECT market, COUNT(*) AS count
+        FROM prediction_daily_betslip
+        GROUP BY market
+        ORDER BY count DESC
+      `).catch((error) => {
+        if (isMissingTableError(error)) return [];
+        throw error;
+      }),
+      query<{ slip_date: string; count: number }>(`
+        SELECT slip_date, COUNT(*) AS count
+        FROM history_daily_d
+        GROUP BY slip_date
+        ORDER BY slip_date DESC
+      `).catch((error) => {
+        if (isMissingTableError(error)) return [];
+        throw error;
+      }),
+    ]);
 
     response.json({ countries, markets, historyDates });
   } catch (error) {
+    if (isMissingTableError(error)) return response.json([]);
     next(error);
   }
 });
@@ -201,6 +232,21 @@ app.get("/api/summary", async (request, response, next) => {
 
     response.json({ matches, betslip });
   } catch (error) {
+    if (isMissingTableError(error)) {
+      return response.json({
+        summary: {
+          settled_picks: 0,
+          won_picks: 0,
+          lost_picks: 0,
+          pending_picks: 0,
+          profit_units: null,
+          avg_confidence: null,
+          avg_odd: null,
+          latest_checked_at: null,
+        },
+        byDate: [],
+      });
+    }
     next(error);
   }
 });
@@ -508,7 +554,7 @@ app.use((error: unknown, _request: express.Request, response: express.Response, 
   response.status(500).json({
     ok: false,
     message: "API query failed",
-    detail: error instanceof Error ? error.message : "Unknown error",
+    detail: errorDetail(error),
   });
 });
 
